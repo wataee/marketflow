@@ -28,7 +28,6 @@ func NewPostgresAdapter(connStr string) (*PostgresAdapter, error) {
 	return &PostgresAdapter{db: db}, nil
 }
 
-// Ping реализует порт Ping
 func (a *PostgresAdapter) Ping(ctx context.Context) error {
 	return a.db.PingContext(ctx)
 }
@@ -43,9 +42,19 @@ func (a *PostgresAdapter) InitSchema(ctx context.Context) error {
 		average_price DOUBLE PRECISION NOT NULL,
 		min_price DOUBLE PRECISION NOT NULL,
 		max_price DOUBLE PRECISION NOT NULL,
-		created_at TIMESTAMP DEFAULT NOW()
+		created_at TIMESTAMP DEFAULT NOW(),
+		CONSTRAINT chk_average_price_positive CHECK (average_price > 0),
+		CONSTRAINT chk_min_price_positive CHECK (min_price > 0),
+		CONSTRAINT chk_max_price_positive CHECK (max_price > 0),
+		CONSTRAINT chk_min_max_price CHECK (min_price <= max_price),
+		CONSTRAINT chk_avg_in_range CHECK (average_price >= min_price AND average_price <= max_price)
 	);
-	CREATE INDEX IF NOT EXISTS idx_pair_exchange_timestamp ON aggregated_prices(pair_name, exchange, timestamp);
+	CREATE INDEX IF NOT EXISTS idx_pair_exchange_timestamp ON aggregated_prices(pair_name, exchange, timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_timestamp ON aggregated_prices(timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_pair_name ON aggregated_prices(pair_name);
+	CREATE INDEX IF NOT EXISTS idx_exchange ON aggregated_prices(exchange);
+	CREATE INDEX IF NOT EXISTS idx_max_price ON aggregated_prices(pair_name, exchange, max_price DESC);
+	CREATE INDEX IF NOT EXISTS idx_min_price ON aggregated_prices(pair_name, exchange, min_price ASC);
 	`
 	_, err := a.db.ExecContext(ctx, query)
 	return err
@@ -58,47 +67,52 @@ func (a *PostgresAdapter) SaveAggregatedPrices(ctx context.Context, prices []mod
 
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
 		_ = tx.Rollback()
 	}()
 
-	// Собираем placeholders и args
 	valueStrings := make([]string, 0, len(prices))
-	valueArgs := make([]interface{}, 0, len(prices)*5)
+	valueArgs := make([]interface{}, 0, len(prices)*6)
+	
 	for i, p := range prices {
-		// 5 полей на запись: pair_name, exchange, timestamp, average_price, min_price, max_price
 		n := i*6 + 1
 		valueStrings = append(valueStrings, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d)", n, n+1, n+2, n+3, n+4, n+5))
 		valueArgs = append(valueArgs, p.PairName, p.Exchange, p.Timestamp, p.AveragePrice, p.MinPrice, p.MaxPrice)
 	}
 
-	stmt := fmt.Sprintf("INSERT INTO aggregated_prices (pair_name, exchange, timestamp, average_price, min_price, max_price) VALUES %s", strings.Join(valueStrings, ","))
+	stmt := fmt.Sprintf(
+		"INSERT INTO aggregated_prices (pair_name, exchange, timestamp, average_price, min_price, max_price) VALUES %s",
+		strings.Join(valueStrings, ","),
+	)
+	
 	if _, err := tx.ExecContext(ctx, stmt, valueArgs...); err != nil {
-		return err
+		return fmt.Errorf("failed to insert aggregated prices: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return err
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	
 	return nil
 }
 
 func (a *PostgresAdapter) GetHighestPrice(ctx context.Context, symbol, exchange string, period time.Duration) (*model.AggregatedPrice, error) {
 	since := time.Now().Add(-period)
 	var row *sql.Row
+	
 	if exchange == "" {
 		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price
 			FROM aggregated_prices
 			WHERE pair_name = $1 AND timestamp >= $2
-			ORDER BY average_price DESC LIMIT 1`
+			ORDER BY max_price DESC LIMIT 1`
 		row = a.db.QueryRowContext(ctx, query, symbol, since)
 	} else {
 		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price
 			FROM aggregated_prices
 			WHERE pair_name = $1 AND exchange = $2 AND timestamp >= $3
-			ORDER BY average_price DESC LIMIT 1`
+			ORDER BY max_price DESC LIMIT 1`
 		row = a.db.QueryRowContext(ctx, query, symbol, exchange, since)
 	}
 
@@ -107,25 +121,27 @@ func (a *PostgresAdapter) GetHighestPrice(ctx context.Context, symbol, exchange 
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("failed to scan highest price: %w", err)
 	}
+	
 	return &ap, nil
 }
 
 func (a *PostgresAdapter) GetLowestPrice(ctx context.Context, symbol, exchange string, period time.Duration) (*model.AggregatedPrice, error) {
 	since := time.Now().Add(-period)
 	var row *sql.Row
+	
 	if exchange == "" {
 		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price
 			FROM aggregated_prices
 			WHERE pair_name = $1 AND timestamp >= $2
-			ORDER BY average_price ASC LIMIT 1`
+			ORDER BY min_price ASC LIMIT 1`
 		row = a.db.QueryRowContext(ctx, query, symbol, since)
 	} else {
 		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price
 			FROM aggregated_prices
 			WHERE pair_name = $1 AND exchange = $2 AND timestamp >= $3
-			ORDER BY average_price ASC LIMIT 1`
+			ORDER BY min_price ASC LIMIT 1`
 		row = a.db.QueryRowContext(ctx, query, symbol, exchange, since)
 	}
 
@@ -134,8 +150,9 @@ func (a *PostgresAdapter) GetLowestPrice(ctx context.Context, symbol, exchange s
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("failed to scan lowest price: %w", err)
 	}
+	
 	return &ap, nil
 }
 
@@ -143,6 +160,7 @@ func (a *PostgresAdapter) GetAveragePrice(ctx context.Context, symbol, exchange 
 	since := time.Now().Add(-period)
 	var query string
 	var row *sql.Row
+	
 	if exchange == "" {
 		query = `SELECT AVG(average_price) FROM aggregated_prices WHERE pair_name = $1 AND timestamp >= $2`
 		row = a.db.QueryRowContext(ctx, query, symbol, since)
@@ -152,19 +170,14 @@ func (a *PostgresAdapter) GetAveragePrice(ctx context.Context, symbol, exchange 
 	}
 
 	var avg sql.NullFloat64
-	if exchange == "" {
-		if err := row.Scan(&avg); err != nil {
-			return 0, err
-		}
-	} else {
-		if err := row.Scan(&avg); err != nil {
-			return 0, err
-		}
+	if err := row.Scan(&avg); err != nil {
+		return 0, fmt.Errorf("failed to scan average price: %w", err)
 	}
 
 	if !avg.Valid {
 		return 0, nil
 	}
+	
 	return avg.Float64, nil
 }
 

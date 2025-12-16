@@ -53,7 +53,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Загружаем JSON конфиг
 	cfg, err := config.LoadConfig("configs/config.json")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
@@ -65,7 +64,7 @@ func main() {
 	}
 
 	log := logger.New(cfg.Logging.Level, cfg.Logging.Format)
-	log.Info("starting marketflow", "version", "1.0.0")
+	log.Info("starting marketflow", "version", "1.0.0", "port", cfg.Server.Port)
 
 	postgresAdapter, err := storage.NewPostgresAdapter(cfg.PostgresDSN())
 	if err != nil {
@@ -73,11 +72,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer postgresAdapter.Close()
+	log.Info("postgres adapter initialized successfully")
 
 	if err := postgresAdapter.InitSchema(context.Background()); err != nil {
 		log.Error("failed to initialize schema", "error", err)
 		os.Exit(1)
 	}
+	log.Info("database schema initialized successfully")
 
 	redisAdapter, err := cache.NewRedisAdapter(
 		cfg.RedisAddr(),
@@ -90,17 +91,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer redisAdapter.Close()
+	log.Info("redis adapter initialized successfully")
 
 	priceUseCase := usecase.NewPriceUseCase(postgresAdapter, redisAdapter)
 	modeService := service.NewModeService(log)
 	aggregationService := service.NewAggregationService(redisAdapter, postgresAdapter, log)
 
-	// Передаём список торговых пар из конфигурации напрямую
 	aggregationService.SetTradingPairs(cfg.TradingPairs)
+	log.Info("trading pairs configured", "pairs", cfg.TradingPairs)
 
-	// Стартуем агрегацию
 	aggregationService.Start(context.Background(), cfg.DataRetention.AggregationInterval)
 	defer aggregationService.Stop()
+	log.Info("aggregation service started", "interval", cfg.DataRetention.AggregationInterval)
 
 	app := &App{
 		config:             cfg,
@@ -112,14 +114,11 @@ func main() {
 	}
 
 	priceHandler := handler.NewPriceHandler(priceUseCase, log)
-	// корректный конструктор для ModeHandler: (modeService, logger)
-	modeHandler := handler.NewModeHandler(modeService, log)
-	// корректный конструктор для HealthHandler: (logger)
-	healthHandler := handler.NewHealthHandler(log)
+	modeHandler := handler.NewModeHandler(modeService, app.switchMode, log)
+	healthHandler := handler.NewHealthHandler(postgresAdapter, redisAdapter, log)
 
 	mux := http.NewServeMux()
 
-	// Регистрация маршрутов (методы можно проверять внутри хэндлеров)
 	mux.HandleFunc("/prices/latest/", priceHandler.GetLatestPrice)
 	mux.HandleFunc("/prices/highest/", priceHandler.GetHighestPrice)
 	mux.HandleFunc("/prices/lowest/", priceHandler.GetLowestPrice)
@@ -128,10 +127,13 @@ func main() {
 	mux.HandleFunc("/mode/live", modeHandler.SwitchToLive)
 	mux.HandleFunc("/health", healthHandler.Check)
 
+	log.Info("routes registered successfully")
+
 	srv := server.NewServer(cfg.Server.Port, mux, log)
 	app.server = srv
 
 	go func() {
+		log.Info("starting http server", "port", cfg.Server.Port)
 		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
 			log.Error("server error", "error", err)
 			os.Exit(1)
@@ -148,7 +150,8 @@ func main() {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	<-sigCh
+	sig := <-sigCh
+	log.Info("received shutdown signal", "signal", sig)
 
 	log.Info("shutting down gracefully")
 	app.shutdown()
@@ -160,35 +163,41 @@ func (a *App) startDataProcessing(ctx context.Context) error {
 
 	var exchanges []port.ExchangePort
 
-	if a.modeService.GetCurrentMode() == model.LiveMode {
+	currentMode := a.modeService.GetCurrentMode()
+	a.logger.Info("starting data processing", "mode", currentMode)
+
+	if currentMode == model.LiveMode {
 		for _, exCfg := range a.config.Exchanges {
 			if !exCfg.Enabled {
+				a.logger.Info("exchange disabled, skipping", "exchange", exCfg.Name)
 				continue
 			}
 			ex := exchange.NewTCPExchange(exCfg.Name, exCfg.Host, exCfg.Port, a.logger)
 			exchanges = append(exchanges, ex)
 		}
+		a.logger.Info("live mode exchanges prepared", "count", len(exchanges))
 	} else {
 		gen := generator.NewTestGenerator("test-generator", a.config.TradingPairs, a.logger)
 		exchanges = append(exchanges, gen)
+		a.logger.Info("test mode generator prepared")
 	}
 
 	var priceChannels []<-chan model.PriceUpdate
 
 	for _, ex := range exchanges {
+		a.logger.Info("connecting to exchange", "exchange", ex.Name())
 		if err := ex.Connect(ctx); err != nil {
 			a.logger.Error("failed to connect", "exchange", ex.Name(), "error", err)
 			continue
 		}
+		a.logger.Info("connected successfully", "exchange", ex.Name())
 
 		priceCh, errCh := ex.ReadPrices(ctx)
 		priceChannels = append(priceChannels, priceCh)
 
-		// Обрабатываем ошибки обмена в отдельной горутине
 		go func(name string, errCh <-chan error, ex port.ExchangePort) {
 			for err := range errCh {
 				a.logger.Error("exchange error", "exchange", name, "error", err)
-				// пробуем переподключиться асинхронно
 				go a.reconnectExchange(ctx, ex)
 			}
 		}(ex.Name(), errCh, ex)
@@ -201,24 +210,32 @@ func (a *App) startDataProcessing(ctx context.Context) error {
 	a.exchanges = exchanges
 
 	mergedCh := fanin.FanIn(priceChannels...)
+	a.logger.Info("fan-in channel created", "sources", len(priceChannels))
 
+	workerCount := a.config.Workers.PerExchange * len(exchanges)
 	workerPool := worker.NewPool(
-		a.config.Workers.PerExchange*len(exchanges),
+		workerCount,
 		a.cacheAdapter,
 		a.storageAdapter,
 		a.logger,
 	)
 	processedCh := workerPool.Start(ctx, mergedCh)
+	a.logger.Info("worker pool started", "workers", workerCount)
 
-	// Костыль: читаем processedCh чтобы горутина не блокировалась
 	go func() {
+		count := 0
 		for range processedCh {
+			count++
+			if count%100 == 0 {
+				a.logger.Debug("processed prices", "count", count)
+			}
 		}
+		a.logger.Info("processed channel closed", "total_processed", count)
 	}()
 
-	a.logger.Info("data processing started",
+	a.logger.Info("data processing started successfully",
 		"exchanges", len(exchanges),
-		"workers", a.config.Workers.PerExchange*len(exchanges))
+		"workers", workerCount)
 
 	return nil
 }
@@ -226,21 +243,26 @@ func (a *App) startDataProcessing(ctx context.Context) error {
 func (a *App) reconnectExchange(ctx context.Context, ex port.ExchangePort) {
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
+	attempt := 1
 
 	for {
 		select {
 		case <-ctx.Done():
+			a.logger.Info("reconnect cancelled", "exchange", ex.Name())
 			return
 		case <-time.After(backoff):
-			a.logger.Info("attempting to reconnect", "exchange", ex.Name())
+			a.logger.Info("attempting to reconnect", "exchange", ex.Name(), "attempt", attempt)
 			if err := ex.Connect(ctx); err == nil {
-				a.logger.Info("reconnected successfully", "exchange", ex.Name())
+				a.logger.Info("reconnected successfully", "exchange", ex.Name(), "attempt", attempt)
 
 				priceCh, errCh := ex.ReadPrices(ctx)
-				// просто потребляем чтобы не блокировать
+				
 				go func() {
+					count := 0
 					for range priceCh {
+						count++
 					}
+					a.logger.Info("reconnected price channel closed", "exchange", ex.Name(), "count", count)
 				}()
 
 				go func() {
@@ -250,12 +272,15 @@ func (a *App) reconnectExchange(ctx context.Context, ex port.ExchangePort) {
 					}
 				}()
 				return
+			} else {
+				a.logger.Warn("reconnect failed", "exchange", ex.Name(), "attempt", attempt, "error", err, "next_backoff", backoff*2)
 			}
 
 			backoff *= 2
 			if backoff > maxBackoff {
 				backoff = maxBackoff
 			}
+			attempt++
 		}
 	}
 }
@@ -264,20 +289,30 @@ func (a *App) switchMode(ctx context.Context, newMode model.DataMode) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.logger.Info("switching mode", "from", a.modeService.GetCurrentMode(), "to", newMode)
+	currentMode := a.modeService.GetCurrentMode()
+	a.logger.Info("switching mode", "from", currentMode, "to", newMode)
+
+	if currentMode == newMode {
+		a.logger.Info("already in requested mode", "mode", newMode)
+		return nil
+	}
 
 	if a.cancel != nil {
+		a.logger.Info("cancelling current context")
 		a.cancel()
 	}
 
 	for _, ex := range a.exchanges {
+		a.logger.Info("closing exchange", "exchange", ex.Name())
 		if err := ex.Close(); err != nil {
 			a.logger.Error("failed to close exchange", "exchange", ex.Name(), "error", err)
 		}
 	}
 	a.exchanges = nil
+	a.logger.Info("all exchanges closed")
 
 	if err := a.modeService.SwitchMode(ctx, newMode); err != nil {
+		a.logger.Error("failed to switch mode in service", "error", err)
 		return err
 	}
 
@@ -285,16 +320,20 @@ func (a *App) switchMode(ctx context.Context, newMode model.DataMode) error {
 	a.cancel = cancel
 
 	time.Sleep(500 * time.Millisecond)
+	a.logger.Info("restarting data processing with new mode", "mode", newMode)
 
 	return a.startDataProcessing(newCtx)
 }
 
 func (a *App) shutdown() {
+	a.logger.Info("starting shutdown sequence")
+
 	if a.cancel != nil {
 		a.cancel()
 	}
 
 	for _, ex := range a.exchanges {
+		a.logger.Info("closing exchange during shutdown", "exchange", ex.Name())
 		if err := ex.Close(); err != nil {
 			a.logger.Error("failed to close exchange", "exchange", ex.Name(), "error", err)
 		}
@@ -305,6 +344,8 @@ func (a *App) shutdown() {
 
 	if err := a.server.Shutdown(shutdownCtx); err != nil {
 		a.logger.Error("shutdown error", "error", err)
+	} else {
+		a.logger.Info("server shut down successfully")
 	}
 
 	a.logger.Info("shutdown complete")
