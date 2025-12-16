@@ -32,6 +32,10 @@ func (a *PostgresAdapter) Ping(ctx context.Context) error {
 	return a.db.PingContext(ctx)
 }
 
+func (a *PostgresAdapter) Close() error {
+	return a.db.Close()
+}
+
 func (a *PostgresAdapter) InitSchema(ctx context.Context) error {
 	query := `
 	CREATE TABLE IF NOT EXISTS aggregated_prices (
@@ -75,7 +79,7 @@ func (a *PostgresAdapter) SaveAggregatedPrices(ctx context.Context, prices []mod
 
 	valueStrings := make([]string, 0, len(prices))
 	valueArgs := make([]interface{}, 0, len(prices)*6)
-	
+
 	for i, p := range prices {
 		n := i*6 + 1
 		valueStrings = append(valueStrings, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d)", n, n+1, n+2, n+3, n+4, n+5))
@@ -86,7 +90,7 @@ func (a *PostgresAdapter) SaveAggregatedPrices(ctx context.Context, prices []mod
 		"INSERT INTO aggregated_prices (pair_name, exchange, timestamp, average_price, min_price, max_price) VALUES %s",
 		strings.Join(valueStrings, ","),
 	)
-	
+
 	if _, err := tx.ExecContext(ctx, stmt, valueArgs...); err != nil {
 		return fmt.Errorf("failed to insert aggregated prices: %w", err)
 	}
@@ -94,14 +98,14 @@ func (a *PostgresAdapter) SaveAggregatedPrices(ctx context.Context, prices []mod
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	
+
 	return nil
 }
 
 func (a *PostgresAdapter) GetHighestPrice(ctx context.Context, symbol, exchange string, period time.Duration) (*model.AggregatedPrice, error) {
 	since := time.Now().Add(-period)
 	var row *sql.Row
-	
+
 	if exchange == "" {
 		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price
 			FROM aggregated_prices
@@ -123,14 +127,14 @@ func (a *PostgresAdapter) GetHighestPrice(ctx context.Context, symbol, exchange 
 		}
 		return nil, fmt.Errorf("failed to scan highest price: %w", err)
 	}
-	
+
 	return &ap, nil
 }
 
 func (a *PostgresAdapter) GetLowestPrice(ctx context.Context, symbol, exchange string, period time.Duration) (*model.AggregatedPrice, error) {
 	since := time.Now().Add(-period)
 	var row *sql.Row
-	
+
 	if exchange == "" {
 		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price
 			FROM aggregated_prices
@@ -152,20 +156,19 @@ func (a *PostgresAdapter) GetLowestPrice(ctx context.Context, symbol, exchange s
 		}
 		return nil, fmt.Errorf("failed to scan lowest price: %w", err)
 	}
-	
+
 	return &ap, nil
 }
 
 func (a *PostgresAdapter) GetAveragePrice(ctx context.Context, symbol, exchange string, period time.Duration) (float64, error) {
 	since := time.Now().Add(-period)
-	var query string
 	var row *sql.Row
-	
+
 	if exchange == "" {
-		query = `SELECT AVG(average_price) FROM aggregated_prices WHERE pair_name = $1 AND timestamp >= $2`
+		query := `SELECT AVG(average_price) FROM aggregated_prices WHERE pair_name = $1 AND timestamp >= $2`
 		row = a.db.QueryRowContext(ctx, query, symbol, since)
 	} else {
-		query = `SELECT AVG(average_price) FROM aggregated_prices WHERE pair_name = $1 AND exchange = $2 AND timestamp >= $3`
+		query := `SELECT AVG(average_price) FROM aggregated_prices WHERE pair_name = $1 AND exchange = $2 AND timestamp >= $3`
 		row = a.db.QueryRowContext(ctx, query, symbol, exchange, since)
 	}
 
@@ -177,10 +180,6 @@ func (a *PostgresAdapter) GetAveragePrice(ctx context.Context, symbol, exchange 
 	if !avg.Valid {
 		return 0, nil
 	}
-	
-	return avg.Float64, nil
-}
 
-func (a *PostgresAdapter) Close() error {
-	return a.db.Close()
+	return avg.Float64, nil
 }

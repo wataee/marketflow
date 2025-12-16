@@ -1,23 +1,38 @@
 #!/bin/bash
 
-# URL сервиса marketflow
-BASE_URL="http://localhost:8080"
+set -e
 
-# Список торговых пар (подставьте те, что у вас в config.json)
-TRADING_PAIRS=("BTCUSD" "ETHUSD" "SOLUSD" "XRPUSD")
+ARCH=$(uname -m)
+echo "Detected architecture: $ARCH"
 
-echo "=== Проверка работы marketflow с эмуляторами ==="
+if [ "$ARCH" != "x86_64" ]; then
+    echo "This script is intended for AMD64/x86_64 architecture."
+    exit 1
+fi
 
-for pair in "${TRADING_PAIRS[@]}"; do
-    echo
-    echo "Торговая пара: $pair"
-    response=$(curl -s "${BASE_URL}/prices/latest/${pair}")
-    if [ $? -eq 0 ] && [ -n "$response" ]; then
-        echo "Последняя цена: $response"
-    else
-        echo "Ошибка: не удалось получить цену для $pair"
+# Загружаем Docker образы для AMD64
+echo "Loading Docker images for AMD64..."
+docker load -i exchange1_amd64.tar
+docker load -i exchange2_amd64.tar
+docker load -i exchange3_amd64.tar
+
+# Устанавливаем имена образов, которые были загружены
+IMAGE1="exchange1:latest"
+IMAGE2="exchange2:latest"
+IMAGE3="exchange3:latest"
+
+# Удаляем старые контейнеры, если есть
+for NAME in exchange1 exchange2 exchange3; do
+    if [ "$(docker ps -aq -f name=$NAME)" ]; then
+        echo "Removing existing container: $NAME"
+        docker rm -f $NAME
     fi
 done
 
-echo
-echo "=== Проверка завершена ==="
+# Запускаем контейнеры с загруженными образами
+echo "Starting containers..."
+docker run -p 40101:40101 --name exchange1 -d $IMAGE1
+docker run -p 40102:40102 --name exchange2 -d $IMAGE2
+docker run -p 40103:40103 --name exchange3 -d $IMAGE3
+
+echo "All containers started successfully!"
