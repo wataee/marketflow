@@ -42,7 +42,7 @@ services:
   # docker load -i exchange2_arm64.tar (или exchange2_amd64.tar)
   # docker load -i exchange3_arm64.tar (или exchange3_amd64.tar)
   exchange1:
-    image: exchange1-arm64  # Измените на exchange1-amd64 для x86_64
+    image: exchange1:latest  # Измените на exchange1-amd64 для x86_64
     container_name: marketflow-exchange1
     ports:
       - "40101:40101"
@@ -51,7 +51,7 @@ services:
     restart: unless-stopped
 
   exchange2:
-    image: exchange2-arm64  # Измените на exchange2-amd64 для x86_64
+    image: exchange1:latest  # Измените на exchange2-amd64 для x86_64
     container_name: marketflow-exchange2
     ports:
       - "40102:40102"
@@ -60,7 +60,7 @@ services:
     restart: unless-stopped
 
   exchange3:
-    image: exchange3-arm64  # Измените на exchange3-amd64 для x86_64
+    image: exchange1:latest  # Измените на exchange3-amd64 для x86_64
     container_name: marketflow-exchange3
     ports:
       - "40103:40103"

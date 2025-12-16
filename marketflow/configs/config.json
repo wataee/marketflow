@@ -6,7 +6,7 @@
     "shutdown_timeout": "30s"
   },
   "postgresql": {
-    "host": "localhost",
+    "host": "postgres",
     "port": 5432,
     "user": "marketflow",
     "password": "marketflow",
@@ -17,7 +17,7 @@
     "conn_max_lifetime": "5m"
   },
   "redis": {
-    "host": "localhost",
+    "host": "redis",
     "port": 6379,
     "password": "",
     "db": 0,
@@ -25,12 +25,12 @@
     "min_idle_conns": 5
   },
   "exchanges": [
-    {"name": "exchange1", "host": "localhost", "port": 40101, "enabled": true},
-    {"name": "exchange2", "host": "localhost", "port": 40102, "enabled": true},
-    {"name": "exchange3", "host": "localhost", "port": 40103, "enabled": true}
+    {"name": "exchange1", "host": "exchange1", "port": 40101, "enabled": true},
+    {"name": "exchange2", "host": "exchange2", "port": 40102, "enabled": true},
+    {"name": "exchange3", "host": "exchange3", "port": 40103, "enabled": true}
   ],
   "test_generator": {
-    "host": "localhost",
+    "host": "marketflow-app",
     "port": 50101,
     "enabled": false
   },
