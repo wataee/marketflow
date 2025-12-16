@@ -2,55 +2,36 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"marketflow/internal/application/service"
 	"marketflow/internal/domain/model"
 	"net/http"
 )
 
-type ModeSwitcher func(ctx context.Context, mode model.DataMode) error
-
 type ModeHandler struct {
 	modeService *service.ModeService
-	switcher    ModeSwitcher
-	logger      *slog.Logger
+	switchFn    func(context.Context, model.DataMode) error
+	log         *slog.Logger
 }
 
-func NewModeHandler(modeService *service.ModeService, switcher ModeSwitcher, logger *slog.Logger) *ModeHandler {
-	return &ModeHandler{
-		modeService: modeService,
-		switcher:    switcher,
-		logger:      logger,
-	}
+func NewModeHandler(ms *service.ModeService, switchFn func(context.Context, model.DataMode) error, log *slog.Logger) *ModeHandler {
+	return &ModeHandler{modeService: ms, switchFn: switchFn, log: log}
 }
 
 func (h *ModeHandler) SwitchToTest(w http.ResponseWriter, r *http.Request) {
-	if err := h.switcher(r.Context(), model.TestMode); err != nil {
-		h.logger.Error("failed to switch to test mode", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"mode":    "test",
-		"message": "Switched to test mode successfully",
-	})
+	h.switchMode(w, r, model.TestMode)
 }
 
 func (h *ModeHandler) SwitchToLive(w http.ResponseWriter, r *http.Request) {
-	if err := h.switcher(r.Context(), model.LiveMode); err != nil {
-		h.logger.Error("failed to switch to live mode", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	h.switchMode(w, r, model.LiveMode)
+}
+
+func (h *ModeHandler) switchMode(w http.ResponseWriter, r *http.Request, mode model.DataMode) {
+	if err := h.switchFn(r.Context(), mode); err != nil {
+		h.log.Error("switch mode failed", "error", err)
+		http.Error(w, "failed to switch mode", http.StatusInternalServerError)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"mode":    "live",
-		"message": "Switched to live mode successfully",
-	})
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
 }

@@ -19,16 +19,25 @@ func NewPriceUseCase(storage port.StoragePort, cache port.CachePort) *PriceUseCa
 	}
 }
 
+// GetLatestPrice сначала пытается из Redis, потом из Postgres
 func (uc *PriceUseCase) GetLatestPrice(ctx context.Context, symbol, exchange string) (*model.LatestPrice, error) {
-	// Сначала проверяем кеш
 	price, err := uc.cache.GetLatestPrice(ctx, symbol, exchange)
 	if err == nil && price != nil {
 		return price, nil
 	}
-
-	// Если в кеше нет, пытаемся получить из БД
-	// TODO: implement fallback to storage
-	return nil, err
+	// fallback на Postgres, берём за последний 1 мин
+	p, err := uc.storage.GetAveragePrice(ctx, symbol, exchange, time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	if p == 0 {
+		return nil, nil
+	}
+	return &model.LatestPrice{
+		Symbol:   symbol,
+		Exchange: exchange,
+		Price:    p,
+	}, nil
 }
 
 func (uc *PriceUseCase) GetHighestPrice(ctx context.Context, symbol, exchange string, period time.Duration) (*model.AggregatedPrice, error) {

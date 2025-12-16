@@ -7,6 +7,7 @@ import (
 	"sync"
 )
 
+// ModeService управляет текущим режимом (Live/Test)
 type ModeService struct {
 	currentMode model.DataMode
 	mu          sync.RWMutex
@@ -23,7 +24,6 @@ func NewModeService(logger *slog.Logger) *ModeService {
 func (s *ModeService) SwitchMode(ctx context.Context, mode model.DataMode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	s.logger.Info("switching mode", "from", s.currentMode, "to", mode)
 	s.currentMode = mode
 	return nil

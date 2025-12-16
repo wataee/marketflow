@@ -1,99 +1,71 @@
 package config
 
-import (
-	"fmt"
-	"os"
-	"time"
-
-	"gopkg.in/yaml.v3"
-)
+import "time"
 
 type Config struct {
 	Server struct {
-		Port            int           `yaml:"port"`
-		ReadTimeout     time.Duration `yaml:"read_timeout"`
-		WriteTimeout    time.Duration `yaml:"write_timeout"`
-		ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
-	} `yaml:"server"`
+		Port               int
+		ReadTimeoutStr     string `json:"read_timeout"`
+		WriteTimeoutStr    string `json:"write_timeout"`
+		ShutdownTimeoutStr string `json:"shutdown_timeout"`
+		ReadTimeout        time.Duration
+		WriteTimeout       time.Duration
+		ShutdownTimeout    time.Duration
+	} `json:"server"`
 
 	PostgreSQL struct {
-		Host            string        `yaml:"host"`
-		Port            int           `yaml:"port"`
-		User            string        `yaml:"user"`
-		Password        string        `yaml:"password"`
-		Database        string        `yaml:"database"`
-		SSLMode         string        `yaml:"sslmode"`
-		MaxOpenConns    int           `yaml:"max_open_conns"`
-		MaxIdleConns    int           `yaml:"max_idle_conns"`
-		ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
-	} `yaml:"postgresql"`
+		Host               string
+		Port               int
+		User               string
+		Password           string
+		Database           string
+		SSLMode            string
+		MaxOpenConns       int    `json:"max_open_conns"`
+		MaxIdleConns       int    `json:"max_idle_conns"`
+		ConnMaxLifetimeStr string `json:"conn_max_lifetime"`
+		ConnMaxLifetime    time.Duration
+	} `json:"postgresql"`
 
 	Redis struct {
-		Host         string `yaml:"host"`
-		Port         int    `yaml:"port"`
-		Password     string `yaml:"password"`
-		DB           int    `yaml:"db"`
-		PoolSize     int    `yaml:"pool_size"`
-		MinIdleConns int    `yaml:"min_idle_conns"`
-	} `yaml:"redis"`
+		Host         string
+		Port         int
+		Password     string
+		DB           int
+		PoolSize     int `json:"pool_size"`
+		MinIdleConns int `json:"min_idle_conns"`
+	} `json:"redis"`
 
 	Exchanges []struct {
-		Name    string `yaml:"name"`
-		Host    string `yaml:"host"`
-		Port    int    `yaml:"port"`
-		Enabled bool   `yaml:"enabled"`
-	} `yaml:"exchanges"`
+		Name    string
+		Host    string
+		Port    int
+		Enabled bool
+	} `json:"exchanges"`
 
 	TestGenerator struct {
-		Host    string `yaml:"host"`
-		Port    int    `yaml:"port"`
-		Enabled bool   `yaml:"enabled"`
-	} `yaml:"test_generator"`
+		Host    string
+		Port    int
+		Enabled bool
+	} `json:"test_generator"`
 
-	TradingPairs []string `yaml:"trading_pairs"`
+	TradingPairs []string `json:"trading_pairs"`
 
 	Workers struct {
-		PerExchange  int           `yaml:"per_exchange"`
-		BatchSize    int           `yaml:"batch_size"`
-		BatchTimeout time.Duration `yaml:"batch_timeout"`
-	} `yaml:"workers"`
+		PerExchange     int    `json:"per_exchange"`
+		BatchSize       int    `json:"batch_size"`
+		BatchTimeoutStr string `json:"batch_timeout"`
+		BatchTimeout    time.Duration
+	} `json:"workers"`
 
 	DataRetention struct {
-		RedisTTL            time.Duration `yaml:"redis_ttl"`
-		AggregationInterval time.Duration `yaml:"aggregation_interval"`
-	} `yaml:"data_retention"`
+		RedisTTLStr            string `json:"redis_ttl"`
+		AggregationIntervalStr string `json:"aggregation_interval"`
+		RedisTTL               time.Duration
+		AggregationInterval    time.Duration
+	} `json:"data_retention"`
 
 	Logging struct {
-		Level  string `yaml:"level"`
-		Format string `yaml:"format"`
-	} `yaml:"logging"`
-}
-
-func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
-	}
-
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
-	}
-
-	return &cfg, nil
-}
-
-func (c *Config) PostgresDSN() string {
-	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		c.PostgreSQL.Host,
-		c.PostgreSQL.Port,
-		c.PostgreSQL.User,
-		c.PostgreSQL.Password,
-		c.PostgreSQL.Database,
-		c.PostgreSQL.SSLMode,
-	)
-}
-
-func (c *Config) RedisAddr() string {
-	return fmt.Sprintf("%s:%d", c.Redis.Host, c.Redis.Port)
+		Level  string `json:"level"`
+		Format string `json:"format"`
+	} `json:"logging"`
 }

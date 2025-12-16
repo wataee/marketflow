@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"encoding/json"
+	"context"
 	"log/slog"
 	"marketflow/internal/domain/port"
 	"net/http"
@@ -10,48 +10,25 @@ import (
 type HealthHandler struct {
 	storage port.StoragePort
 	cache   port.CachePort
-	logger  *slog.Logger
+	log     *slog.Logger
 }
 
-func NewHealthHandler(storage port.StoragePort, cache port.CachePort, logger *slog.Logger) *HealthHandler {
-	return &HealthHandler{
-		storage: storage,
-		cache:   cache,
-		logger:  logger,
-	}
+func NewHealthHandler(storage port.StoragePort, cache port.CachePort, log *slog.Logger) *HealthHandler {
+	return &HealthHandler{storage: storage, cache: cache, log: log}
 }
 
 func (h *HealthHandler) Check(w http.ResponseWriter, r *http.Request) {
-	dbStatus := "healthy"
-	redisStatus := "healthy"
-	overallStatus := "healthy"
-
-	if err := h.storage.Ping(r.Context()); err != nil {
-		dbStatus = "unhealthy"
-		overallStatus = "degraded"
-		h.logger.Warn("database health check failed", "error", err)
+	ctx := context.Background()
+	if err := h.storage.Ping(ctx); err != nil {
+		h.log.Error("storage ping failed", "error", err)
+		http.Error(w, "storage unavailable", http.StatusInternalServerError)
+		return
 	}
-
-	if err := h.cache.Ping(r.Context()); err != nil {
-		redisStatus = "unhealthy"
-		overallStatus = "degraded"
-		h.logger.Warn("redis health check failed", "error", err)
+	if err := h.cache.Ping(ctx); err != nil {
+		h.log.Error("cache ping failed", "error", err)
+		http.Error(w, "cache unavailable", http.StatusInternalServerError)
+		return
 	}
-
-	response := map[string]interface{}{
-		"status": overallStatus,
-		"checks": map[string]string{
-			"database": dbStatus,
-			"redis":    redisStatus,
-		},
-	}
-
-	statusCode := http.StatusOK
-	if overallStatus == "degraded" {
-		statusCode = http.StatusServiceUnavailable
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(response)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
 }

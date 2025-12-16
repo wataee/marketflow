@@ -2,68 +2,57 @@ package generator
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"marketflow/internal/domain/model"
 	"math/rand"
+	"marketflow/internal/domain/model"
+	"marketflow/internal/domain/port"
 	"time"
 )
 
 type TestGenerator struct {
 	name    string
-	symbols []string
-	logger  *slog.Logger
+	pairs   []string
+	log     *slog.Logger
+	cancel  context.CancelFunc
 }
 
-func NewTestGenerator(name string, symbols []string, logger *slog.Logger) *TestGenerator {
-	return &TestGenerator{
-		name:    name,
-		symbols: symbols,
-		logger:  logger,
-	}
+func NewTestGenerator(name string, pairs []string, log *slog.Logger) port.ExchangePort {
+	return &TestGenerator{name: name, pairs: pairs, log: log}
 }
 
-func (g *TestGenerator) Connect(ctx context.Context) error {
-	g.logger.Info("test generator started", "name", g.name)
+func (t *TestGenerator) Name() string { return t.name }
+
+func (t *TestGenerator) Connect(ctx context.Context) error {
+	// nothing to do
 	return nil
 }
 
-func (g *TestGenerator) Subscribe(symbols []string) error {
+func (t *TestGenerator) Subscribe(symbols []string) error {
 	return nil
 }
 
-func (g *TestGenerator) ReadPrices(ctx context.Context) (<-chan model.PriceUpdate, <-chan error) {
-	priceCh := make(chan model.PriceUpdate)
-	errCh := make(chan error, 1)
+func (t *TestGenerator) ReadPrices(ctx context.Context) (<-chan model.PriceUpdate, <-chan error) {
+	out := make(chan model.PriceUpdate)
+	errCh := make(chan error)
+	ctx, cancel := context.WithCancel(ctx)
+	t.cancel = cancel
 
 	go func() {
-		defer close(priceCh)
+		defer close(out)
 		defer close(errCh)
-
-		ticker := time.NewTicker(100 * time.Millisecond)
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
-
-		basePrices := map[string]float64{
-			"BTCUSDT":  50000.0,
-			"ETHUSDT":  3000.0,
-			"DOGEUSDT": 0.1,
-			"TONUSDT":  5.0,
-			"SOLUSDT":  100.0,
-		}
-
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				for _, symbol := range g.symbols {
-					basePrice := basePrices[symbol]
-					variation := (rand.Float64() - 0.5) * 0.01 * basePrice
-					price := basePrice + variation
-
-					priceCh <- model.PriceUpdate{
-						Symbol:    symbol,
-						Exchange:  g.name,
+				for _, pair := range t.pairs {
+					price := r.Float64()*100 + 1 // случайная цена
+					out <- model.PriceUpdate{
+						Symbol:    pair,
+						Exchange:  t.name,
 						Price:     price,
 						Timestamp: time.Now(),
 					}
@@ -71,14 +60,12 @@ func (g *TestGenerator) ReadPrices(ctx context.Context) (<-chan model.PriceUpdat
 			}
 		}
 	}()
-
-	return priceCh, errCh
+	return out, errCh
 }
 
-func (g *TestGenerator) Close() error {
+func (t *TestGenerator) Close() error {
+	if t.cancel != nil {
+		t.cancel()
+	}
 	return nil
-}
-
-func (g *TestGenerator) Name() string {
-	return fmt.Sprintf("test-%s", g.name)
 }

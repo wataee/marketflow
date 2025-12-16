@@ -28,7 +28,7 @@ import (
 )
 
 var (
-	port1     = flag.Int("port", 0, "Port number")
+	portFlag = flag.Int("port", 0, "Port number")
 	helpFlag = flag.Bool("help", false, "Show help")
 )
 
@@ -53,14 +53,15 @@ func main() {
 		os.Exit(0)
 	}
 
-	cfg, err := config.Load("configs/config.yaml")
+	// Загружаем JSON конфиг
+	cfg, err := config.LoadConfig("configs/config.json")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 
-	if *port1 != 0 {
-		cfg.Server.Port = *port1
+	if *portFlag != 0 {
+		cfg.Server.Port = *portFlag
 	}
 
 	log := logger.New(cfg.Logging.Level, cfg.Logging.Format)
@@ -92,8 +93,12 @@ func main() {
 
 	priceUseCase := usecase.NewPriceUseCase(postgresAdapter, redisAdapter)
 	modeService := service.NewModeService(log)
-	aggregationService := service.NewAggregationService(redisAdapter, postgresAdapter, log, cfg.TradingPairs)
+	aggregationService := service.NewAggregationService(redisAdapter, postgresAdapter, log)
 
+	// Передаём список торговых пар из конфигурации напрямую
+	aggregationService.SetTradingPairs(cfg.TradingPairs)
+
+	// Стартуем агрегацию
 	aggregationService.Start(context.Background(), cfg.DataRetention.AggregationInterval)
 	defer aggregationService.Stop()
 
@@ -107,18 +112,21 @@ func main() {
 	}
 
 	priceHandler := handler.NewPriceHandler(priceUseCase, log)
-	modeHandler := handler.NewModeHandler(modeService, app.switchMode, log)
-	healthHandler := handler.NewHealthHandler(postgresAdapter, redisAdapter, log)
+	// корректный конструктор для ModeHandler: (modeService, logger)
+	modeHandler := handler.NewModeHandler(modeService, log)
+	// корректный конструктор для HealthHandler: (logger)
+	healthHandler := handler.NewHealthHandler(log)
 
 	mux := http.NewServeMux()
 
+	// Регистрация маршрутов (методы можно проверять внутри хэндлеров)
 	mux.HandleFunc("/prices/latest/", priceHandler.GetLatestPrice)
 	mux.HandleFunc("/prices/highest/", priceHandler.GetHighestPrice)
 	mux.HandleFunc("/prices/lowest/", priceHandler.GetLowestPrice)
 	mux.HandleFunc("/prices/average/", priceHandler.GetAveragePrice)
-	mux.HandleFunc("POST /mode/test", modeHandler.SwitchToTest)
-	mux.HandleFunc("POST /mode/live", modeHandler.SwitchToLive)
-	mux.HandleFunc("GET /health", healthHandler.Check)
+	mux.HandleFunc("/mode/test", modeHandler.SwitchToTest)
+	mux.HandleFunc("/mode/live", modeHandler.SwitchToLive)
+	mux.HandleFunc("/health", healthHandler.Check)
 
 	srv := server.NewServer(cfg.Server.Port, mux, log)
 	app.server = srv
@@ -176,12 +184,14 @@ func (a *App) startDataProcessing(ctx context.Context) error {
 		priceCh, errCh := ex.ReadPrices(ctx)
 		priceChannels = append(priceChannels, priceCh)
 
-		go func(name string, errCh <-chan error) {
+		// Обрабатываем ошибки обмена в отдельной горутине
+		go func(name string, errCh <-chan error, ex port.ExchangePort) {
 			for err := range errCh {
 				a.logger.Error("exchange error", "exchange", name, "error", err)
-				a.reconnectExchange(ctx, ex)
+				// пробуем переподключиться асинхронно
+				go a.reconnectExchange(ctx, ex)
 			}
-		}(ex.Name(), errCh)
+		}(ex.Name(), errCh, ex)
 	}
 
 	if len(priceChannels) == 0 {
@@ -200,6 +210,7 @@ func (a *App) startDataProcessing(ctx context.Context) error {
 	)
 	processedCh := workerPool.Start(ctx, mergedCh)
 
+	// Костыль: читаем processedCh чтобы горутина не блокировалась
 	go func() {
 		for range processedCh {
 		}
@@ -226,6 +237,7 @@ func (a *App) reconnectExchange(ctx context.Context, ex port.ExchangePort) {
 				a.logger.Info("reconnected successfully", "exchange", ex.Name())
 
 				priceCh, errCh := ex.ReadPrices(ctx)
+				// просто потребляем чтобы не блокировать
 				go func() {
 					for range priceCh {
 					}
@@ -234,7 +246,7 @@ func (a *App) reconnectExchange(ctx context.Context, ex port.ExchangePort) {
 				go func() {
 					for err := range errCh {
 						a.logger.Error("exchange error after reconnect", "exchange", ex.Name(), "error", err)
-						a.reconnectExchange(ctx, ex)
+						go a.reconnectExchange(ctx, ex)
 					}
 				}()
 				return

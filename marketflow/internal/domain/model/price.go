@@ -2,7 +2,6 @@ package model
 
 import "time"
 
-// PriceUpdate представляет обновление цены от биржи
 type PriceUpdate struct {
 	Symbol    string
 	Exchange  string
@@ -10,7 +9,6 @@ type PriceUpdate struct {
 	Timestamp time.Time
 }
 
-// AggregatedPrice представляет агрегированные данные за период
 type AggregatedPrice struct {
 	PairName     string
 	Exchange     string
@@ -20,7 +18,6 @@ type AggregatedPrice struct {
 	MaxPrice     float64
 }
 
-// LatestPrice представляет последнюю цену для API
 type LatestPrice struct {
 	Symbol    string
 	Exchange  string

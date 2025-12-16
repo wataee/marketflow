@@ -3,85 +3,96 @@ package exchange
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"marketflow/internal/domain/model"
+	"marketflow/internal/domain/port"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 )
 
 type TCPExchange struct {
-	name    string
-	address string
-	conn    net.Conn
-	logger  *slog.Logger
+	name   string
+	host   string
+	port   int
+	conn   net.Conn
+	log    *slog.Logger
+	cancel context.CancelFunc
 }
 
-func NewTCPExchange(name, host string, port int, logger *slog.Logger) *TCPExchange {
-	return &TCPExchange{
-		name:    name,
-		address: fmt.Sprintf("%s:%d", host, port),
-		logger:  logger,
-	}
+func NewTCPExchange(name, host string, port int, log *slog.Logger) port.ExchangePort {
+	return &TCPExchange{name: name, host: host, port: port, log: log}
 }
 
-func (e *TCPExchange) Connect(ctx context.Context) error {
-	conn, err := net.Dial("tcp", e.address)
+func (t *TCPExchange) Name() string { return t.name }
+
+func (t *TCPExchange) Connect(ctx context.Context) error {
+	addr := fmt.Sprintf("%s:%d", t.host, t.port)
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to connect to %s: %w", e.name, err)
+		return err
 	}
-	e.conn = conn
-	e.logger.Info("connected to exchange", "exchange", e.name, "address", e.address)
+	t.conn = conn
+	t.log.Info("connected to exchange", "exchange", t.name)
 	return nil
 }
 
-func (e *TCPExchange) Subscribe(symbols []string) error {
-	// TODO: Send subscription message if needed
+func (t *TCPExchange) Subscribe(symbols []string) error {
+	// tcp source sends all data automatically
 	return nil
 }
 
-func (e *TCPExchange) ReadPrices(ctx context.Context) (<-chan model.PriceUpdate, <-chan error) {
-	priceCh := make(chan model.PriceUpdate)
-	errCh := make(chan error, 1)
+// ReadPrices читает данные строки: SYMBOL,PRICE\n
+func (t *TCPExchange) ReadPrices(ctx context.Context) (<-chan model.PriceUpdate, <-chan error) {
+	out := make(chan model.PriceUpdate)
+	errCh := make(chan error)
+	ctx, cancel := context.WithCancel(ctx)
+	t.cancel = cancel
 
 	go func() {
-		defer close(priceCh)
+		defer close(out)
 		defer close(errCh)
-
-		scanner := bufio.NewScanner(e.conn)
-		for scanner.Scan() {
+		reader := bufio.NewReader(t.conn)
+		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				line := scanner.Text()
-				var update model.PriceUpdate
-				if err := json.Unmarshal([]byte(line), &update); err != nil {
-					e.logger.Error("failed to parse price", "error", err, "line", line)
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					errCh <- err
+					return
+				}
+				line = strings.TrimSpace(line)
+				parts := strings.Split(line, ",")
+				if len(parts) != 2 {
 					continue
 				}
-				update.Exchange = e.name
-				update.Timestamp = time.Now()
-				priceCh <- update
+				priceVal, err := strconv.ParseFloat(parts[1], 64)
+				if err != nil {
+					continue
+				}
+				out <- model.PriceUpdate{
+					Symbol:    parts[0],
+					Exchange:  t.name,
+					Price:     priceVal,
+					Timestamp: time.Now(),
+				}
 			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			errCh <- err
 		}
 	}()
 
-	return priceCh, errCh
+	return out, errCh
 }
 
-func (e *TCPExchange) Close() error {
-	if e.conn != nil {
-		return e.conn.Close()
+func (t *TCPExchange) Close() error {
+	if t.cancel != nil {
+		t.cancel()
+	}
+	if t.conn != nil {
+		return t.conn.Close()
 	}
 	return nil
-}
-
-func (e *TCPExchange) Name() string {
-	return e.name
 }
