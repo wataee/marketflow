@@ -1,5 +1,8 @@
 FROM golang:1.21-alpine AS builder
 
+ENV GO111MODULE=on
+ENV CGO_ENABLED=0
+
 WORKDIR /app
 
 RUN apk add --no-cache git
@@ -9,13 +12,15 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o marketflow ./cmd/marketflow
+RUN go build -v -o marketflow ./cmd/marketflow
+
+# --------------------
 
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+RUN apk add --no-cache ca-certificates
 
-WORKDIR /root/
+WORKDIR /root
 
 COPY --from=builder /app/marketflow .
 COPY --from=builder /app/configs ./configs
