@@ -36,6 +36,38 @@ services:
     networks:
       - marketflow-network
 
+  # Exchange emulators
+  # Перед запуском загрузите образы:
+  # docker load -i exchange1_arm64.tar (или exchange1_amd64.tar)
+  # docker load -i exchange2_arm64.tar (или exchange2_amd64.tar)
+  # docker load -i exchange3_arm64.tar (или exchange3_amd64.tar)
+  exchange1:
+    image: exchange1-arm64  # Измените на exchange1-amd64 для x86_64
+    container_name: marketflow-exchange1
+    ports:
+      - "40101:40101"
+    networks:
+      - marketflow-network
+    restart: unless-stopped
+
+  exchange2:
+    image: exchange2-arm64  # Измените на exchange2-amd64 для x86_64
+    container_name: marketflow-exchange2
+    ports:
+      - "40102:40102"
+    networks:
+      - marketflow-network
+    restart: unless-stopped
+
+  exchange3:
+    image: exchange3-arm64  # Измените на exchange3-amd64 для x86_64
+    container_name: marketflow-exchange3
+    ports:
+      - "40103:40103"
+    networks:
+      - marketflow-network
+    restart: unless-stopped
+
   marketflow:
     build:
       context: .
@@ -48,7 +80,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      exchange1:
+        condition: service_started
+      exchange2:
+        condition: service_started
+      exchange3:
+        condition: service_started
     environment:
+      # Переопределяем hosts для Docker окружения
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+      - EXCHANGE1_HOST=exchange1
+      - EXCHANGE2_HOST=exchange2
+      - EXCHANGE3_HOST=exchange3
       - SERVER_PORT=8080
     volumes:
       - ./configs:/root/configs
