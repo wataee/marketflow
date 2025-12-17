@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"marketflow/internal/domain/model"
 	"strconv"
 	"time"
+
+	"marketflow/internal/domain/model"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -43,7 +44,7 @@ func (a *RedisAdapter) SetLatestPrice(ctx context.Context, price model.PriceUpda
 	if err != nil {
 		return fmt.Errorf("failed to marshal price: %w", err)
 	}
-	
+
 	if err := a.client.Set(ctx, key, data, a.ttl).Err(); err != nil {
 		return fmt.Errorf("failed to set latest price in redis: %w", err)
 	}
@@ -76,28 +77,28 @@ func (a *RedisAdapter) GetLatestPrice(ctx context.Context, symbol, exchange stri
 // GetLatestPriceAny получает последнюю цену для symbol от любого exchange
 func (a *RedisAdapter) GetLatestPriceAny(ctx context.Context, symbol string) (*model.LatestPrice, error) {
 	pattern := fmt.Sprintf("latest:*:%s", symbol)
-	
+
 	var cursor uint64
 	var latestPrice *model.LatestPrice
 	var latestTime time.Time
-	
+
 	for {
 		keys, nextCursor, err := a.client.Scan(ctx, cursor, pattern, 10).Result()
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan redis keys: %w", err)
 		}
-		
+
 		for _, key := range keys {
 			data, err := a.client.Get(ctx, key).Bytes()
 			if err != nil {
 				continue
 			}
-			
+
 			var price model.PriceUpdate
 			if err := json.Unmarshal(data, &price); err != nil {
 				continue
 			}
-			
+
 			if latestPrice == nil || price.Timestamp.After(latestTime) {
 				latestTime = price.Timestamp
 				latestPrice = &model.LatestPrice{
@@ -108,13 +109,13 @@ func (a *RedisAdapter) GetLatestPriceAny(ctx context.Context, symbol string) (*m
 				}
 			}
 		}
-		
+
 		cursor = nextCursor
 		if cursor == 0 {
 			break
 		}
 	}
-	
+
 	return latestPrice, nil
 }
 
@@ -124,7 +125,7 @@ func (a *RedisAdapter) AddPriceToWindow(ctx context.Context, price model.PriceUp
 	if err != nil {
 		return fmt.Errorf("failed to marshal price for window: %w", err)
 	}
-	
+
 	z := redis.Z{
 		Score:  float64(price.Timestamp.Unix()),
 		Member: data,
@@ -162,18 +163,18 @@ func (a *RedisAdapter) GetPricesInWindow(ctx context.Context, symbol, exchange s
 	for _, key := range keys {
 		minStr := strconv.FormatInt(minTs, 10)
 		maxStr := strconv.FormatInt(maxTs, 10)
-		
+
 		results, err := a.client.ZRangeByScore(ctx, key, &redis.ZRangeBy{
 			Min:    minStr,
 			Max:    maxStr,
 			Offset: 0,
 			Count:  0,
 		}).Result()
-		
+
 		if err != nil && err != redis.Nil {
 			return nil, fmt.Errorf("failed to get prices from window %s: %w", key, err)
 		}
-		
+
 		for _, item := range results {
 			var pu model.PriceUpdate
 			if err := json.Unmarshal([]byte(item), &pu); err != nil {
@@ -189,10 +190,10 @@ func (a *RedisAdapter) GetPricesInWindow(ctx context.Context, symbol, exchange s
 func (a *RedisAdapter) DeleteOldPrices(ctx context.Context, before time.Time) error {
 	max := strconv.FormatInt(before.Unix(), 10)
 	pattern := "window:*:*"
-	
+
 	iter := a.client.Scan(ctx, 0, pattern, 0).Iterator()
 	deletedCount := 0
-	
+
 	for iter.Next(ctx) {
 		key := iter.Val()
 		deleted, err := a.client.ZRemRangeByScore(ctx, key, "-inf", max).Result()
@@ -201,11 +202,11 @@ func (a *RedisAdapter) DeleteOldPrices(ctx context.Context, before time.Time) er
 		}
 		deletedCount += int(deleted)
 	}
-	
+
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("failed to iterate redis keys: %w", err)
 	}
-	
+
 	return nil
 }
 

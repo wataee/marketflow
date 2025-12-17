@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"marketflow/internal/domain/port"
 	"net/http"
+
+	"marketflow/internal/domain/port"
 )
 
 type HealthHandler struct {
@@ -35,7 +36,7 @@ func (h *HealthHandler) Check(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("health check requested")
-	
+
 	ctx := context.Background()
 	response := HealthResponse{
 		Status:   "ok",

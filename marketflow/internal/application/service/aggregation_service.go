@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"marketflow/internal/domain/model"
-	"marketflow/internal/domain/port"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"marketflow/internal/domain/model"
+	"marketflow/internal/domain/port"
 )
 
 type AggregationService struct {

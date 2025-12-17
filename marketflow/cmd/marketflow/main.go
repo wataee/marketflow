@@ -5,6 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
 	"marketflow/internal/adapter/cache"
 	"marketflow/internal/adapter/exchange"
 	"marketflow/internal/adapter/generator"
@@ -19,12 +26,6 @@ import (
 	"marketflow/internal/infrastructure/config"
 	"marketflow/internal/infrastructure/logger"
 	"marketflow/internal/infrastructure/server"
-	"net/http"
-	"os"
-	"os/signal"
-	"sync"
-	"syscall"
-	"time"
 )
 
 var (
@@ -153,7 +154,7 @@ func main() {
 
 	if err := app.startDataProcessing(ctx); err != nil {
 		log.Error("failed to start data processing", "error", err)
-		app.shutdown() 
+		app.shutdown()
 		os.Exit(1)
 	}
 
@@ -193,7 +194,7 @@ func (a *App) reconnectExchange(ctx context.Context, ex port.ExchangePort) {
 				// Новый priceCh НЕ подключен к Fan-In. В данной архитектуре
 				// корректное добавление нового потока данных без перезапуска Fan-In сложно.
 				// Сейчас мы просто перезапускаем горутину обработки ошибок.
-				
+
 				_, errCh := ex.ReadPrices(ctx) // Получаем новые каналы (priceCh игнорируем, т.к. не можем добавить в Fan-In)
 
 				go func(ex port.ExchangePort) {
@@ -203,7 +204,7 @@ func (a *App) reconnectExchange(ctx context.Context, ex port.ExchangePort) {
 						return // Важно выйти после повторного вызова reconnect
 					}
 				}(ex)
-				
+
 				return
 			} else {
 				a.logger.Warn("reconnect failed", "exchange", ex.Name(), "attempt", attempt, "error", err, "next_backoff", backoff*2)
@@ -327,7 +328,7 @@ func (a *App) startDataProcessingInternal(ctx context.Context) error {
 	mergedCh := fanin.FanIn(priceChannels...)
 	workerCount := a.config.Workers.PerExchange * len(exchanges)
 	workerPool := worker.NewPool(workerCount, a.cacheAdapter, a.storageAdapter, a.logger)
-	
+
 	processedCh := workerPool.Start(ctx, mergedCh)
 
 	go func() {
@@ -338,9 +339,6 @@ func (a *App) startDataProcessingInternal(ctx context.Context) error {
 
 	return nil
 }
-
-
-
 
 func printUsage() {
 	fmt.Println("Usage:")

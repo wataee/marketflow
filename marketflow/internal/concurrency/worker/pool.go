@@ -3,10 +3,10 @@ package worker
 import (
 	"context"
 	"log/slog"
-	"marketflow/internal/domain/model"
-	"marketflow/internal/domain/port"
 	"sync"
 
+	"marketflow/internal/domain/model"
+	"marketflow/internal/domain/port"
 )
 
 // Pool выполняет обработку PriceUpdate'ов.

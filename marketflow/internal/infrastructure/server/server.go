@@ -28,23 +28,23 @@ func NewServer(port int, handler http.Handler, logger *slog.Logger) *Server {
 
 func (s *Server) Start() error {
 	s.logger.Info("starting HTTP server", "addr", s.httpServer.Addr)
-	
+
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		s.logger.Error("HTTP server error", "error", err)
 		return err
 	}
-	
+
 	return nil
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP server")
-	
+
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		s.logger.Error("HTTP server shutdown error", "error", err)
 		return err
 	}
-	
+
 	s.logger.Info("HTTP server shut down successfully")
 	return nil
 }

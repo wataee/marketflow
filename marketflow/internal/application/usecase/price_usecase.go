@@ -2,9 +2,10 @@ package usecase
 
 import (
 	"context"
+	"time"
+
 	"marketflow/internal/domain/model"
 	"marketflow/internal/domain/port"
-	"time"
 )
 
 type PriceUseCase struct {
@@ -31,7 +32,7 @@ func (uc *PriceUseCase) GetLatestPrice(ctx context.Context, symbol, exchange str
 			return price, nil
 		}
 	}
-	
+
 	avgPrice, err := uc.storage.GetAveragePrice(ctx, symbol, exchange, time.Minute)
 	if err != nil {
 		return nil, err
@@ -39,7 +40,7 @@ func (uc *PriceUseCase) GetLatestPrice(ctx context.Context, symbol, exchange str
 	if avgPrice == 0 {
 		return nil, nil
 	}
-	
+
 	return &model.LatestPrice{
 		Symbol:    symbol,
 		Exchange:  exchange,
@@ -53,7 +54,7 @@ func (uc *PriceUseCase) GetHighestPrice(ctx context.Context, symbol, exchange st
 	if err == nil && price != nil {
 		return price, nil
 	}
-	
+
 	return uc.computeHighestFromCache(ctx, symbol, exchange, period)
 }
 
@@ -62,7 +63,7 @@ func (uc *PriceUseCase) GetLowestPrice(ctx context.Context, symbol, exchange str
 	if err == nil && price != nil {
 		return price, nil
 	}
-	
+
 	return uc.computeLowestFromCache(ctx, symbol, exchange, period)
 }
 
@@ -71,7 +72,7 @@ func (uc *PriceUseCase) GetAveragePrice(ctx context.Context, symbol, exchange st
 	if err == nil && avgPrice > 0 {
 		return avgPrice, nil
 	}
-	
+
 	return uc.computeAverageFromCache(ctx, symbol, exchange, period)
 }
 
@@ -80,7 +81,7 @@ func (uc *PriceUseCase) computeHighestFromCache(ctx context.Context, symbol, exc
 	if err != nil || len(prices) == 0 {
 		return nil, nil
 	}
-	
+
 	maxPrice := prices[0].Price
 	var maxPriceUpdate model.PriceUpdate
 	for _, p := range prices {
@@ -89,9 +90,9 @@ func (uc *PriceUseCase) computeHighestFromCache(ctx context.Context, symbol, exc
 			maxPriceUpdate = p
 		}
 	}
-	
+
 	avg, min, max := computeStats(prices)
-	
+
 	return &model.AggregatedPrice{
 		PairName:     symbol,
 		Exchange:     maxPriceUpdate.Exchange,
@@ -107,7 +108,7 @@ func (uc *PriceUseCase) computeLowestFromCache(ctx context.Context, symbol, exch
 	if err != nil || len(prices) == 0 {
 		return nil, nil
 	}
-	
+
 	minPrice := prices[0].Price
 	var minPriceUpdate model.PriceUpdate
 	for _, p := range prices {
@@ -116,9 +117,9 @@ func (uc *PriceUseCase) computeLowestFromCache(ctx context.Context, symbol, exch
 			minPriceUpdate = p
 		}
 	}
-	
+
 	avg, min, max := computeStats(prices)
-	
+
 	return &model.AggregatedPrice{
 		PairName:     symbol,
 		Exchange:     minPriceUpdate.Exchange,
@@ -134,7 +135,7 @@ func (uc *PriceUseCase) computeAverageFromCache(ctx context.Context, symbol, exc
 	if err != nil || len(prices) == 0 {
 		return 0, nil
 	}
-	
+
 	avg, _, _ := computeStats(prices)
 	return avg, nil
 }
@@ -144,11 +145,11 @@ func (uc *PriceUseCase) getPricesFromCache(ctx context.Context, symbol, exchange
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if period >= time.Minute {
 		return allPrices, nil
 	}
-	
+
 	cutoff := time.Now().Add(-period)
 	var filtered []model.PriceUpdate
 	for _, p := range allPrices {
@@ -156,7 +157,7 @@ func (uc *PriceUseCase) getPricesFromCache(ctx context.Context, symbol, exchange
 			filtered = append(filtered, p)
 		}
 	}
-	
+
 	return filtered, nil
 }
 

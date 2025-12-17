@@ -1,8 +1,9 @@
 package fanin
 
 import (
-	"marketflow/internal/domain/model"
 	"sync"
+
+	"marketflow/internal/domain/model"
 )
 
 // FanIn объединяет несколько каналов PriceUpdate в один.

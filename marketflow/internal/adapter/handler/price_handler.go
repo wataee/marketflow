@@ -3,10 +3,11 @@ package handler
 import (
 	"encoding/json"
 	"log/slog"
-	"marketflow/internal/application/usecase"
 	"net/http"
 	"strings"
 	"time"
+
+	"marketflow/internal/application/usecase"
 )
 
 type PriceHandler struct {
@@ -30,7 +31,7 @@ func (h *PriceHandler) GetLatestPrice(w http.ResponseWriter, r *http.Request) {
 
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/prices/latest/"), "/")
 	var symbol, exchange string
-	
+
 	if len(parts) == 1 {
 		symbol = parts[0]
 	} else if len(parts) == 2 {
@@ -50,7 +51,7 @@ func (h *PriceHandler) GetLatestPrice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to get price", http.StatusInternalServerError)
 		return
 	}
-	
+
 	if price == nil {
 		h.log.Info("price not found", "symbol", symbol, "exchange", exchange)
 		http.Error(w, "not found", http.StatusNotFound)
@@ -95,7 +96,7 @@ func (h *PriceHandler) handleAggregate(w http.ResponseWriter, r *http.Request, t
 		http.Error(w, "symbol missing", http.StatusBadRequest)
 		return
 	}
-	
+
 	var symbol, exchange string
 	if len(pathParts) == 1 {
 		symbol = pathParts[0]
@@ -160,7 +161,7 @@ func (h *PriceHandler) handleAggregate(w http.ResponseWriter, r *http.Request, t
 		http.Error(w, "failed", http.StatusInternalServerError)
 		return
 	}
-	
+
 	if result == nil {
 		h.log.Info("aggregate result not found",
 			"type", typ,

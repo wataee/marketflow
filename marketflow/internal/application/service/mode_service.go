@@ -3,8 +3,9 @@ package service
 import (
 	"context"
 	"log/slog"
-	"marketflow/internal/domain/model"
 	"sync"
+
+	"marketflow/internal/domain/model"
 )
 
 // ModeService управляет текущим режимом (Live/Test)
@@ -24,11 +25,11 @@ func NewModeService(logger *slog.Logger) *ModeService {
 func (s *ModeService) SwitchMode(ctx context.Context, mode model.DataMode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	if s.currentMode == mode {
 		return nil
 	}
-	
+
 	s.logger.Info("mode_service: mode updated", "old", s.currentMode, "new", mode)
 	s.currentMode = mode
 	return nil

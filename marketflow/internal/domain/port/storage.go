@@ -2,8 +2,9 @@ package port
 
 import (
 	"context"
-	"marketflow/internal/domain/model"
 	"time"
+
+	"marketflow/internal/domain/model"
 )
 
 type StoragePort interface {

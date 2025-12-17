@@ -4,9 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"marketflow/internal/domain/model"
 	"strings"
 	"time"
+
+	"marketflow/internal/domain/model"
 
 	_ "github.com/lib/pq"
 )

@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"marketflow/internal/domain/model"
-	"marketflow/internal/domain/port"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"marketflow/internal/domain/model"
+	"marketflow/internal/domain/port"
 )
 
 type TCPExchange struct {

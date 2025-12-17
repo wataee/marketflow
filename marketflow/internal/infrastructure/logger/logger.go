@@ -8,7 +8,7 @@ import (
 
 func New(level, format string) *slog.Logger {
 	var logLevel slog.Level
-	
+
 	switch strings.ToLower(level) {
 	case "debug":
 		logLevel = slog.LevelDebug
@@ -27,7 +27,7 @@ func New(level, format string) *slog.Logger {
 	}
 
 	var handler slog.Handler
-	
+
 	switch strings.ToLower(format) {
 	case "json":
 		handler = slog.NewJSONHandler(os.Stdout, opts)

@@ -113,4 +113,4 @@ func (c *Config) PostgresDSN() string {
 
 func (c *Config) RedisAddr() string {
 	return fmt.Sprintf("%s:%d", c.Redis.Host, c.Redis.Port)
-}	
+}
