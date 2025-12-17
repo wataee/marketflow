@@ -46,12 +46,9 @@ services:
       redis:
         condition: service_healthy
     environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_USER: marketflow
-      POSTGRES_PASSWORD: marketflow
-      POSTGRES_DB: marketflow
-      REDIS_HOST: redis
-      SERVER_PORT: 8080
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+      - SERVER_PORT=8080
     networks:
       - marketflow-network
     restart: unless-stopped

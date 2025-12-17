@@ -73,7 +73,51 @@ func (a *RedisAdapter) GetLatestPrice(ctx context.Context, symbol, exchange stri
 	}, nil
 }
 
-// AddPriceToWindow добавляет цену в sorted set для window (score = unix seconds)
+// GetLatestPriceAny получает последнюю цену для symbol от любого exchange
+func (a *RedisAdapter) GetLatestPriceAny(ctx context.Context, symbol string) (*model.LatestPrice, error) {
+	pattern := fmt.Sprintf("latest:*:%s", symbol)
+	
+	var cursor uint64
+	var latestPrice *model.LatestPrice
+	var latestTime time.Time
+	
+	for {
+		keys, nextCursor, err := a.client.Scan(ctx, cursor, pattern, 10).Result()
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan redis keys: %w", err)
+		}
+		
+		for _, key := range keys {
+			data, err := a.client.Get(ctx, key).Bytes()
+			if err != nil {
+				continue
+			}
+			
+			var price model.PriceUpdate
+			if err := json.Unmarshal(data, &price); err != nil {
+				continue
+			}
+			
+			if latestPrice == nil || price.Timestamp.After(latestTime) {
+				latestTime = price.Timestamp
+				latestPrice = &model.LatestPrice{
+					Symbol:    price.Symbol,
+					Exchange:  price.Exchange,
+					Price:     price.Price,
+					Timestamp: price.Timestamp,
+				}
+			}
+		}
+		
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	
+	return latestPrice, nil
+}
+
 func (a *RedisAdapter) AddPriceToWindow(ctx context.Context, price model.PriceUpdate) error {
 	key := fmt.Sprintf("window:%s:%s", price.Exchange, price.Symbol)
 	data, err := json.Marshal(price)
@@ -94,7 +138,6 @@ func (a *RedisAdapter) AddPriceToWindow(ctx context.Context, price model.PriceUp
 	return nil
 }
 
-// GetPricesInWindow возвращает цены за последний TTL для symbol/exchange
 func (a *RedisAdapter) GetPricesInWindow(ctx context.Context, symbol, exchange string) ([]model.PriceUpdate, error) {
 	now := time.Now()
 	minTs := now.Add(-a.ttl).Unix()
@@ -143,7 +186,6 @@ func (a *RedisAdapter) GetPricesInWindow(ctx context.Context, symbol, exchange s
 	return out, nil
 }
 
-// DeleteOldPrices удаляет записи старше before по всем window ключам
 func (a *RedisAdapter) DeleteOldPrices(ctx context.Context, before time.Time) error {
 	max := strconv.FormatInt(before.Unix(), 10)
 	pattern := "window:*:*"
@@ -162,10 +204,6 @@ func (a *RedisAdapter) DeleteOldPrices(ctx context.Context, before time.Time) er
 	
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("failed to iterate redis keys: %w", err)
-	}
-	
-	if deletedCount > 0 {
-		// Can add logging here if needed
 	}
 	
 	return nil
