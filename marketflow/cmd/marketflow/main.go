@@ -170,88 +170,7 @@ func main() {
 func (a *App) startDataProcessing(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	var exchanges []port.ExchangePort
-
-	currentMode := a.modeService.GetCurrentMode()
-	a.logger.Info("starting data processing", "mode", currentMode)
-
-	if currentMode == model.LiveMode {
-		for _, exCfg := range a.config.Exchanges {
-			if !exCfg.Enabled {
-				a.logger.Info("exchange disabled, skipping", "exchange", exCfg.Name)
-				continue
-			}
-			ex := exchange.NewTCPExchange(exCfg.Name, exCfg.Host, exCfg.Port, a.logger)
-			exchanges = append(exchanges, ex)
-		}
-		a.logger.Info("live mode exchanges prepared", "count", len(exchanges))
-	} else {
-		gen := generator.NewTestGenerator("test-generator", a.config.TradingPairs, a.logger)
-		exchanges = append(exchanges, gen)
-		a.logger.Info("test mode generator prepared")
-	}
-
-	var priceChannels []<-chan model.PriceUpdate
-
-	for _, ex := range exchanges {
-		a.logger.Info("connecting to exchange", "exchange", ex.Name())
-		if err := ex.Connect(ctx); err != nil {
-			a.logger.Error("failed to connect", "exchange", ex.Name(), "error", err)
-			continue
-		}
-		a.logger.Info("connected successfully", "exchange", ex.Name())
-
-		priceCh, errCh := ex.ReadPrices(ctx)
-		priceChannels = append(priceChannels, priceCh)
-
-		go func(name string, errCh <-chan error, ex port.ExchangePort) {
-			for err := range errCh {
-				a.logger.Error("exchange error", "exchange", name, "error", err)
-				go a.reconnectExchange(ctx, ex)
-			}
-		}(ex.Name(), errCh, ex)
-	}
-
-	if len(priceChannels) == 0 {
-		return fmt.Errorf("no exchanges connected")
-	}
-
-	a.exchanges = exchanges
-
-	mergedCh := fanin.FanIn(priceChannels...)
-	a.logger.Info("fan-in channel created", "sources", len(priceChannels))
-
-	workerCount := a.config.Workers.PerExchange * len(exchanges)
-	workerPool := worker.NewPool(
-		workerCount,
-		a.cacheAdapter,
-		a.storageAdapter,
-		a.logger,
-	)
-	
-	processedCh := workerPool.Start(ctx, mergedCh)
-	a.logger.Info("worker pool started", "workers", workerCount)
-
-	// Читаем из processedCh, чтобы избежать блокировки (deadlock) и
-	// иметь возможность логировать активность worker'ов.
-	// WorkerPool сам отвечает за запись в Redis, AggregationService читает из Redis по таймеру.
-	go func() {
-		count := 0
-		for range processedCh { // Просто считываем, чтобы канал не блокировался
-			count++
-			if count%100 == 0 {
-				a.logger.Debug("processed prices", "count", count)
-			}
-		}
-		a.logger.Info("processed channel closed", "total_processed", count)
-	}()
-
-	a.logger.Info("data processing started successfully",
-		"exchanges", len(exchanges),
-		"workers", workerCount)
-
-	return nil
+	return a.startDataProcessingInternal(ctx)
 }
 
 func (a *App) reconnectExchange(ctx context.Context, ex port.ExchangePort) {
@@ -304,43 +223,34 @@ func (a *App) switchMode(ctx context.Context, newMode model.DataMode) error {
 	defer a.mu.Unlock()
 
 	currentMode := a.modeService.GetCurrentMode()
-	a.logger.Info("switching mode", "from", currentMode, "to", newMode)
-
 	if currentMode == newMode {
-		a.logger.Info("already in requested mode", "mode", newMode)
 		return nil
 	}
 
-	// 1. Остановка текущей обработки данных
+	// 1. Останавливаем старый контекст
 	if a.cancel != nil {
-		a.logger.Info("cancelling current context")
 		a.cancel()
 	}
 
-	// 2. Закрытие всех соединений/генераторов
+	// 2. Закрываем старые соединения
 	for _, ex := range a.exchanges {
-		a.logger.Info("closing exchange", "exchange", ex.Name())
-		if err := ex.Close(); err != nil {
-			a.logger.Error("failed to close exchange", "exchange", ex.Name(), "error", err)
-		}
+		_ = ex.Close()
 	}
 	a.exchanges = nil
-	a.logger.Info("all exchanges closed")
 
-	// 3. Смена режима
+	// 3. Обновляем режим в сервисе
 	if err := a.modeService.SwitchMode(ctx, newMode); err != nil {
-		a.logger.Error("failed to switch mode in service", "error", err)
 		return err
 	}
 
-	// 4. Запуск новой обработки данных
+	// 4. Запускаем новую обработку с НОВЫМ контекстом
 	newCtx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 
-	time.Sleep(500 * time.Millisecond)
-	a.logger.Info("restarting data processing with new mode", "mode", newMode)
+	// Небольшая пауза, чтобы старые горутины успели закрыть сокеты
+	time.Sleep(100 * time.Millisecond)
 
-	return a.startDataProcessing(newCtx)
+	return a.startDataProcessingInternal(newCtx)
 }
 
 func (a *App) shutdown() {
@@ -371,6 +281,66 @@ func (a *App) shutdown() {
 
 	a.logger.Info("shutdown complete")
 }
+
+func (a *App) startDataProcessingInternal(ctx context.Context) error {
+	var exchanges []port.ExchangePort
+
+	currentMode := a.modeService.GetCurrentMode()
+	a.logger.Info("starting data processing", "mode", currentMode)
+
+	if currentMode == model.LiveMode {
+		for _, exCfg := range a.config.Exchanges {
+			if !exCfg.Enabled {
+				continue
+			}
+			ex := exchange.NewTCPExchange(exCfg.Name, exCfg.Host, exCfg.Port, a.logger)
+			exchanges = append(exchanges, ex)
+		}
+	} else {
+		gen := generator.NewTestGenerator("test-generator", a.config.TradingPairs, a.logger)
+		exchanges = append(exchanges, gen)
+	}
+
+	var priceChannels []<-chan model.PriceUpdate
+	for _, ex := range exchanges {
+		if err := ex.Connect(ctx); err != nil {
+			a.logger.Error("failed to connect", "exchange", ex.Name(), "error", err)
+			continue
+		}
+
+		priceCh, errCh := ex.ReadPrices(ctx)
+		priceChannels = append(priceChannels, priceCh)
+
+		go func(name string, eCh <-chan error, exPort port.ExchangePort) {
+			for err := range eCh {
+				a.logger.Error("exchange error", "exchange", name, "error", err)
+				go a.reconnectExchange(ctx, exPort)
+			}
+		}(ex.Name(), errCh, ex)
+	}
+
+	if len(priceChannels) == 0 {
+		return fmt.Errorf("no exchanges connected")
+	}
+
+	a.exchanges = exchanges
+	mergedCh := fanin.FanIn(priceChannels...)
+	workerCount := a.config.Workers.PerExchange * len(exchanges)
+	workerPool := worker.NewPool(workerCount, a.cacheAdapter, a.storageAdapter, a.logger)
+	
+	processedCh := workerPool.Start(ctx, mergedCh)
+
+	go func() {
+		for range processedCh {
+			// Очищаем канал, чтобы не было deadlock
+		}
+	}()
+
+	return nil
+}
+
+
+
 
 func printUsage() {
 	fmt.Println("Usage:")
