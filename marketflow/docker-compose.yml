@@ -1,3 +1,5 @@
+version: "3.8"
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -33,6 +35,35 @@ services:
     networks:
       - marketflow-network
 
+  # --- Сервисы Бирж (Добавлены) ---
+  exchange1:
+    image: exchange1:latest  # Используем локальный образ, который у вас уже есть
+    container_name: exchange1
+    ports:
+      - "40101:40101"
+    networks:
+      - marketflow-network
+    restart: unless-stopped
+
+  exchange2:
+    image: exchange2:latest
+    container_name: exchange2
+    ports:
+      - "40102:40102"
+    networks:
+      - marketflow-network
+    restart: unless-stopped
+
+  exchange3:
+    image: exchange3:latest
+    container_name: exchange3
+    ports:
+      - "40103:40103"
+    networks:
+      - marketflow-network
+    restart: unless-stopped
+
+  # --- Основное приложение ---
   marketflow:
     build:
       context: .
@@ -45,6 +76,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Добавляем зависимость от бирж, чтобы они запустились до приложения
+      exchange1:
+        condition: service_started
+      exchange2:
+        condition: service_started
+      exchange3:
+        condition: service_started
     environment:
       - POSTGRES_HOST=postgres
       - REDIS_HOST=redis
