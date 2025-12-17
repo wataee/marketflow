@@ -46,19 +46,10 @@ func (a *PostgresAdapter) InitSchema(ctx context.Context) error {
 		average_price DOUBLE PRECISION NOT NULL,
 		min_price DOUBLE PRECISION NOT NULL,
 		max_price DOUBLE PRECISION NOT NULL,
-		created_at TIMESTAMP DEFAULT NOW(),
-		CONSTRAINT chk_average_price_positive CHECK (average_price > 0),
-		CONSTRAINT chk_min_price_positive CHECK (min_price > 0),
-		CONSTRAINT chk_max_price_positive CHECK (max_price > 0),
-		CONSTRAINT chk_min_max_price CHECK (min_price <= max_price),
-		CONSTRAINT chk_avg_in_range CHECK (average_price >= min_price AND average_price <= max_price)
+		created_at TIMESTAMP DEFAULT NOW()
 	);
 	CREATE INDEX IF NOT EXISTS idx_pair_exchange_timestamp ON aggregated_prices(pair_name, exchange, timestamp DESC);
 	CREATE INDEX IF NOT EXISTS idx_timestamp ON aggregated_prices(timestamp DESC);
-	CREATE INDEX IF NOT EXISTS idx_pair_name ON aggregated_prices(pair_name);
-	CREATE INDEX IF NOT EXISTS idx_exchange ON aggregated_prices(exchange);
-	CREATE INDEX IF NOT EXISTS idx_max_price ON aggregated_prices(pair_name, exchange, max_price DESC);
-	CREATE INDEX IF NOT EXISTS idx_min_price ON aggregated_prices(pair_name, exchange, min_price ASC);
 	`
 	_, err := a.db.ExecContext(ctx, query)
 	return err
@@ -73,9 +64,7 @@ func (a *PostgresAdapter) SaveAggregatedPrices(ctx context.Context, prices []mod
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
+	defer tx.Rollback()
 
 	valueStrings := make([]string, 0, len(prices))
 	valueArgs := make([]interface{}, 0, len(prices)*6)
@@ -83,7 +72,7 @@ func (a *PostgresAdapter) SaveAggregatedPrices(ctx context.Context, prices []mod
 	for i, p := range prices {
 		n := i*6 + 1
 		valueStrings = append(valueStrings, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d)", n, n+1, n+2, n+3, n+4, n+5))
-		valueArgs = append(valueArgs, p.PairName, p.Exchange, p.Timestamp, p.AveragePrice, p.MinPrice, p.MaxPrice)
+		valueArgs = append(valueArgs, p.PairName, p.Exchange, p.Timestamp.UTC(), p.AveragePrice, p.MinPrice, p.MaxPrice)
 	}
 
 	stmt := fmt.Sprintf(
@@ -95,28 +84,24 @@ func (a *PostgresAdapter) SaveAggregatedPrices(ctx context.Context, prices []mod
 		return fmt.Errorf("failed to insert aggregated prices: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return nil
+	return tx.Commit()
 }
 
 func (a *PostgresAdapter) GetHighestPrice(ctx context.Context, symbol, exchange string, period time.Duration) (*model.AggregatedPrice, error) {
-	since := time.Now().Add(-period)
+	since := time.Now().UTC().Add(-period)
 	var row *sql.Row
 
 	if exchange == "" {
-		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price
-			FROM aggregated_prices
-			WHERE pair_name = $1 AND timestamp >= $2
-			ORDER BY max_price DESC LIMIT 1`
+		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price 
+				  FROM aggregated_prices 
+				  WHERE pair_name = $1 AND timestamp >= $2 
+				  ORDER BY max_price DESC LIMIT 1`
 		row = a.db.QueryRowContext(ctx, query, symbol, since)
 	} else {
-		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price
-			FROM aggregated_prices
-			WHERE pair_name = $1 AND exchange = $2 AND timestamp >= $3
-			ORDER BY max_price DESC LIMIT 1`
+		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price 
+				  FROM aggregated_prices 
+				  WHERE pair_name = $1 AND exchange = $2 AND timestamp >= $3 
+				  ORDER BY max_price DESC LIMIT 1`
 		row = a.db.QueryRowContext(ctx, query, symbol, exchange, since)
 	}
 
@@ -128,24 +113,25 @@ func (a *PostgresAdapter) GetHighestPrice(ctx context.Context, symbol, exchange 
 		return nil, fmt.Errorf("failed to scan highest price: %w", err)
 	}
 
+	ap.Timestamp = ap.Timestamp.UTC()
 	return &ap, nil
 }
 
 func (a *PostgresAdapter) GetLowestPrice(ctx context.Context, symbol, exchange string, period time.Duration) (*model.AggregatedPrice, error) {
-	since := time.Now().Add(-period)
+	since := time.Now().UTC().Add(-period)
 	var row *sql.Row
 
 	if exchange == "" {
-		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price
-			FROM aggregated_prices
-			WHERE pair_name = $1 AND timestamp >= $2
-			ORDER BY min_price ASC LIMIT 1`
+		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price 
+				  FROM aggregated_prices 
+				  WHERE pair_name = $1 AND timestamp >= $2 
+				  ORDER BY min_price ASC LIMIT 1`
 		row = a.db.QueryRowContext(ctx, query, symbol, since)
 	} else {
-		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price
-			FROM aggregated_prices
-			WHERE pair_name = $1 AND exchange = $2 AND timestamp >= $3
-			ORDER BY min_price ASC LIMIT 1`
+		query := `SELECT pair_name, exchange, timestamp, average_price, min_price, max_price 
+				  FROM aggregated_prices 
+				  WHERE pair_name = $1 AND exchange = $2 AND timestamp >= $3 
+				  ORDER BY min_price ASC LIMIT 1`
 		row = a.db.QueryRowContext(ctx, query, symbol, exchange, since)
 	}
 
@@ -157,11 +143,12 @@ func (a *PostgresAdapter) GetLowestPrice(ctx context.Context, symbol, exchange s
 		return nil, fmt.Errorf("failed to scan lowest price: %w", err)
 	}
 
+	ap.Timestamp = ap.Timestamp.UTC()
 	return &ap, nil
 }
 
 func (a *PostgresAdapter) GetAveragePrice(ctx context.Context, symbol, exchange string, period time.Duration) (float64, error) {
-	since := time.Now().Add(-period)
+	since := time.Now().UTC().Add(-period)
 	var row *sql.Row
 
 	if exchange == "" {

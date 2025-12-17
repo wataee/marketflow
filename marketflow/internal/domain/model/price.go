@@ -3,24 +3,24 @@ package model
 import "time"
 
 type PriceUpdate struct {
-	Symbol    string
-	Exchange  string
-	Price     float64
-	Timestamp time.Time
+	Symbol    string    `json:"symbol"`
+	Exchange  string    `json:"exchange"`
+	Price     float64   `json:"price"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 type AggregatedPrice struct {
-	PairName     string
-	Exchange     string
-	Timestamp    time.Time
-	AveragePrice float64
-	MinPrice     float64
-	MaxPrice     float64
+	PairName     string    `json:"pair_name"`
+	Exchange     string    `json:"exchange"`
+	Timestamp    time.Time `json:"timestamp"`
+	AveragePrice float64   `json:"average_price"`
+	MinPrice     float64   `json:"min_price"`
+	MaxPrice     float64   `json:"max_price"`
 }
 
 type LatestPrice struct {
-	Symbol    string
-	Exchange  string
-	Price     float64
-	Timestamp time.Time
+	Symbol    string    `json:"symbol"`
+	Exchange  string    `json:"exchange"`
+	Price     float64   `json:"price"`
+	Timestamp time.Time `json:"timestamp"`
 }

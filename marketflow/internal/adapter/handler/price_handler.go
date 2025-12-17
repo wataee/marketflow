@@ -179,7 +179,10 @@ func (h *PriceHandler) handleAggregate(w http.ResponseWriter, r *http.Request, t
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+	payload, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+		return
 	}
+	w.Write(payload)
 }
